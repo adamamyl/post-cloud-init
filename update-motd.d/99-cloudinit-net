@@ -76,7 +76,6 @@ ip -brief addr show | while read iface state addrs; do
 
     IFS=' ' read -r -a addr_array <<< "$addrs"
     first_line=true
-    line_addr=""
 
     for addr in "${addr_array[@]}"; do
         # Determine color
@@ -92,48 +91,25 @@ ip -brief addr show | while read iface state addrs; do
             addr_color=$GREEN
         fi
 
-        # If single address longer than MAX_ADDR_WIDTH, print on its own line
+        # Print address on its own row if too long
         if [ ${#addr} -ge $MAX_ADDR_WIDTH ]; then
-            if [ -n "$line_addr" ]; then
-                if $first_line; then
-                    print_row "$iface_display" "$state" "$line_addr" "$addr_color"
-                    first_line=false
-                else
-                    print_row "" "" "$line_addr" "$addr_color"
-                fi
+            if [ "$first_line" = true ]; then
+                print_row "$iface_display" "$state" "$addr" "$addr_color"
+                first_line=false
+            else
+                print_row "" "" "$addr" "$addr_color"
             fi
-            print_row "" "" "$addr" "$addr_color"
-            line_addr=""
             continue
         fi
 
         # Wrap multiple addresses
-        if [ -z "$line_addr" ]; then
-            line_addr="$addr"
-        else
-            if [ $((${#line_addr}+${#addr}+3)) -gt $MAX_ADDR_WIDTH ]; then
-                if $first_line; then
-                    print_row "$iface_display" "$state" "$line_addr" "$addr_color"
-                    first_line=false
-                else
-                    print_row "" "" "$line_addr" "$addr_color"
-                fi
-                line_addr="$addr"
-            else
-                line_addr="$line_addr | $addr"
-            fi
-        fi
-    done
-
-    # Print any remaining addresses
-    if [ -n "$line_addr" ]; then
-        if $first_line; then
-            print_row "$iface_display" "$state" "$line_addr" "$addr_color"
+        if [ "$first_line" = true ]; then
+            print_row "$iface_display" "$state" "$addr" "$addr_color"
             first_line=false
         else
-            print_row "" "" "$line_addr" "$addr_color"
+            print_row "" "" "$addr" "$addr_color"
         fi
-    fi
+    done
 
     # Horizontal line after each interface
     table_line
