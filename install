@@ -1,0 +1,35 @@
+#!/bin/bash
+# Installer for cloud-init style MOTD + /etc/issue + systemd service
+# Must be run as root
+
+set -e
+
+# --- Check for root ---
+if [ "$(id -u)" -ne 0 ]; then
+    echo "This installer must be run as root. Use sudo ./install.sh"
+    exit 1
+fi
+
+echo "Installing cloud-init style MOTD and /etc/issue updater..."
+
+# 1️⃣ MOTD script
+echo "Installing MOTD script..."
+install -o root -g root -m 755 update-motd.d/99-cloudinit-net /etc/update-motd.d/99-cloudinit-net
+
+# 2️⃣ /usr/local/sbin/update-issue.sh
+echo "Installing /usr/local/sbin/update-issue.sh..."
+install -o root -g root -m 755 bin/update-issue.sh /usr/local/sbin/update-issue.sh
+
+# 3️⃣ systemd service
+echo "Installing systemd service..."
+install -o root -g root -m 644 systemd/update-issue.service /etc/systemd/system/update-issue.service
+
+# Reload systemd and enable service
+echo "Reloading systemd and enabling service..."
+systemctl daemon-reload
+systemctl enable update-issue.service
+systemctl start update-issue.service
+
+echo "Installation complete!"
+echo "MOTD will update dynamically on login."
+echo "/etc/issue updated at boot by systemd service."
