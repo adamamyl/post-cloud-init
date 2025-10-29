@@ -1,6 +1,7 @@
 #!/bin/bash
 # Installer for cloud-init style MOTD + /etc/issue + systemd service
 # Must be run as root
+# Installs files only if the repo version is newer than the installed version
 
 set -e
 
@@ -12,19 +13,30 @@ fi
 
 echo "Installing cloud-init style MOTD and /etc/issue updater..."
 
+# Helper: install if source is newer than target
+install_if_newer() {
+    local src="$1"
+    local dst="$2"
+    local mode="$3"
+
+    if [ ! -e "$dst" ] || [ "$src" -nt "$dst" ]; then
+        echo "Installing/updating $dst"
+        install -o root -g root -m "$mode" "$src" "$dst"
+    else
+        echo "Skipping $dst (up-to-date)"
+    fi
+}
+
 # 1️⃣ MOTD script
-echo "Installing MOTD script..."
-install -o root -g root -m 755 update-motd.d/99-cloudinit-net /etc/update-motd.d/99-cloudinit-net
+install_if_newer update-motd.d/99-cloudinit-net /etc/update-motd.d/99-cloudinit-net 755
 
 # 2️⃣ /usr/local/sbin/update-issue.sh
-echo "Installing /usr/local/sbin/update-issue.sh..."
-install -o root -g root -m 755 bin/update-issue.sh /usr/local/sbin/update-issue.sh
+install_if_newer bin/update-issue.sh /usr/local/sbin/update-issue.sh 755
 
 # 3️⃣ systemd service
-echo "Installing systemd service..."
-install -o root -g root -m 644 systemd/update-issue.service /etc/systemd/system/update-issue.service
+install_if_newer systemd/update-issue.service /etc/systemd/system/update-issue.service 644
 
-# Reload systemd and enable service
+# Reload systemd and enable service (always run to be safe)
 echo "Reloading systemd and enabling service..."
 systemctl daemon-reload
 systemctl enable update-issue.service

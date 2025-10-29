@@ -26,7 +26,11 @@ else
     RESET="\033[0m"
 fi
 
-MAX_ADDR_WIDTH=45
+# Column widths
+IFACE_WIDTH=20
+STATE_WIDTH=10
+ADDR_WIDTH=41
+MAX_ADDR_WIDTH=$ADDR_WIDTH
 
 HOSTNAME=$(hostname)
 OS_NAME=$(lsb_release -d | cut -f2)
@@ -37,21 +41,32 @@ PRIMARY_IFACE=$(ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++){if($i=="dev"){pr
 PUBLIC_IP4=$(ip -4 addr show dev "$PRIMARY_IFACE" | awk '{print $2}' | grep -v -E '^10\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^192\.168\.' | head -n1)
 PUBLIC_IP6=$(ip -6 addr show dev "$PRIMARY_IFACE" | awk '{print $2}' | grep -v '^fe80:' | head -n1)
 
+# Print table row
 print_row() {
     local iface="$1"
     local state="$2"
     local addr="$3"
     local color="$4"
-    printf "| %-14s | %-7s | %-30s |\n" "$color$iface$RESET" "$color$state$RESET" "$color$addr$RESET"
+    printf "| %-20s | %-10s | %-41s |\n" "$color$iface$RESET" "$color$state$RESET" "$color$addr$RESET"
 }
 
+# Generate table line
+table_line() {
+    printf "+%s+%s+%s+\n" \
+        "$(printf '%.0s-' $(seq 1 $IFACE_WIDTH))" \
+        "$(printf '%.0s-' $(seq 1 $STATE_WIDTH))" \
+        "$(printf '%.0s-' $(seq 1 $ADDR_WIDTH))"
+}
+
+# Header
 printf "${BLUE}Welcome to %s (${OS_NAME})${RESET}\n" "$HOSTNAME"
 printf "Kernel: %s | Uptime: %s\n\n" "$KERNEL" "$UPTIME"
 
-printf "+----------------+---------+--------------------------------+\n"
-printf "| Interface      | State   | Addresses                      |\n"
-printf "+----------------+---------+--------------------------------+\n"
+table_line
+printf "| %-20s | %-10s | %-41s |\n" "Interface" "State" "Addresses"
+table_line
 
+# Loop interfaces
 ip -brief addr show | while read iface state addrs; do
     if [[ "$iface" == "$PRIMARY_IFACE" ]]; then
         iface_display="${MAGENTA}${iface}*${RESET}"
@@ -64,7 +79,7 @@ ip -brief addr show | while read iface state addrs; do
     line_addr=""
 
     for addr in "${addr_array[@]}"; do
-        # Color logic only if colors enabled
+        # Determine color
         if [ $NO_COLOR -eq 1 ]; then
             addr_color=""
         elif [[ "$addr" == "$PUBLIC_IP4"* ]]; then
@@ -77,7 +92,23 @@ ip -brief addr show | while read iface state addrs; do
             addr_color=$GREEN
         fi
 
-        if [ ${#line_addr} -eq 0 ]; then
+        # If single address longer than MAX_ADDR_WIDTH, print on its own line
+        if [ ${#addr} -ge $MAX_ADDR_WIDTH ]; then
+            if [ -n "$line_addr" ]; then
+                if $first_line; then
+                    print_row "$iface_display" "$state" "$line_addr" "$addr_color"
+                    first_line=false
+                else
+                    print_row "" "" "$line_addr" "$addr_color"
+                fi
+            fi
+            print_row "" "" "$addr" "$addr_color"
+            line_addr=""
+            continue
+        fi
+
+        # Wrap multiple addresses
+        if [ -z "$line_addr" ]; then
             line_addr="$addr"
         else
             if [ $((${#line_addr}+${#addr}+3)) -gt $MAX_ADDR_WIDTH ]; then
@@ -94,15 +125,21 @@ ip -brief addr show | while read iface state addrs; do
         fi
     done
 
-    if $first_line; then
-        print_row "$iface_display" "$state" "$line_addr" "$addr_color"
-    else
-        print_row "" "" "$line_addr" "$addr_color"
+    # Print any remaining addresses
+    if [ -n "$line_addr" ]; then
+        if $first_line; then
+            print_row "$iface_display" "$state" "$line_addr" "$addr_color"
+            first_line=false
+        else
+            print_row "" "" "$line_addr" "$addr_color"
+        fi
     fi
+
+    # Horizontal line after each interface
+    table_line
 done
 
-printf "+----------------+---------+--------------------------------+\n"
-
+# Footer
 TOTAL_MEM=$(free -h | awk '/^Mem:/ {print $2}')
 USED_MEM=$(free -h | awk '/^Mem:/ {print $3}')
 DISK=$(df -h / | awk 'NR==2 {print $2 " total, " $3 " used"}')
