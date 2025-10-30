@@ -1,11 +1,13 @@
 [Unit]
-Description=Update /etc/issue pre-login with network info
+Description=Update /etc/issue after network is online
 After=network-online.target
-Wants=network-online.target
+Wants=network-online.target systemd-networkd-wait-online.service
+DefaultDependencies=no
 
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/update-issue.sh
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target

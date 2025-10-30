@@ -1,122 +1,96 @@
 #!/bin/bash
-# Cloud-init style MOTD: dual-stack network + primary interface + system info
-# Supports --no-color for /etc/issue
+# Dynamic MOTD network table with colors
+set -e
 
-NO_COLOR=0
-if [[ "$1" == "--no-color" ]]; then
-    NO_COLOR=1
-fi
+ESC=$'\033'
+CYAN="${ESC}[36m"
+BOLD_CYAN="${ESC}[1;36m"
+GREEN="${ESC}[32m"
+BOLD_GREEN="${ESC}[1;32m"
+MAGENTA="${ESC}[35m"
+RESET="${ESC}[0m"
 
-# Colors
-if [ $NO_COLOR -eq 1 ]; then
-    CYAN=""
-    BOLD_CYAN=""
-    GREEN=""
-    BOLD_GREEN=""
-    MAGENTA=""
-    BLUE=""
-    RESET=""
-else
-    CYAN="\033[1;36m"
-    BOLD_CYAN="\033[1;36;1m"
-    GREEN="\033[1;32m"
-    BOLD_GREEN="\033[1;32;1m"
-    MAGENTA="\033[1;35m"
-    BLUE="\033[1;34m"
-    RESET="\033[0m"
-fi
+WIDTH_IF=18
+WIDTH_STATE=8
+WIDTH_ADDR=59
+SEP="+--------------------+----------+-------------------------------------------------------------+"
 
-# Column widths
-IFACE_WIDTH=20
-STATE_WIDTH=10
-ADDR_WIDTH=41
-MAX_ADDR_WIDTH=$ADDR_WIDTH
+print_header() {
+    echo "$SEP"
+    printf "| %-*s | %-*s | %-*s |\n" "$WIDTH_IF" "Interface" "$WIDTH_STATE" "State" "$WIDTH_ADDR" "Addresses"
+    echo "$SEP"
+}
 
-HOSTNAME=$(hostname)
-OS_NAME=$(lsb_release -d | cut -f2)
-KERNEL=$(uname -r)
-UPTIME=$(uptime -p)
-
-PRIMARY_IFACE=$(ip route get 1.1.1.1 | awk '{for(i=1;i<=NF;i++){if($i=="dev"){print $(i+1); exit}}}')
-PUBLIC_IP4=$(ip -4 addr show dev "$PRIMARY_IFACE" | awk '{print $2}' | grep -v -E '^10\.|^172\.(1[6-9]|2[0-9]|3[0-1])\.|^192\.168\.' | head -n1)
-PUBLIC_IP6=$(ip -6 addr show dev "$PRIMARY_IFACE" | awk '{print $2}' | grep -v '^fe80:' | head -n1)
-
-# Print table row
 print_row() {
-    local iface="$1"
-    local state="$2"
-    local addr="$3"
-    local color="$4"
-    printf "| %-20s | %-10s | %-41s |\n" "$color$iface$RESET" "$color$state$RESET" "$color$addr$RESET"
+    local iface="$1" state="$2" addr="$3" color="$4"
+    local iface_fmt state_fmt addr_fmt
+    iface_fmt=$(printf "%-*s" "$WIDTH_IF" "$iface")
+    state_fmt=$(printf "%-*s" "$WIDTH_STATE" "$state")
+    addr_fmt=$(printf "%-*s" "$WIDTH_ADDR" "$addr")
+    printf "| %s%s%s | %s%s%s | %s%s%s |\n" \
+        "$color" "$iface_fmt" "$RESET" \
+        "$color" "$state_fmt" "$RESET" \
+        "$color" "$addr_fmt" "$RESET"
 }
 
-# Generate table line
-table_line() {
-    printf "+%s+%s+%s+\n" \
-        "$(printf '%.0s-' $(seq 1 $IFACE_WIDTH))" \
-        "$(printf '%.0s-' $(seq 1 $STATE_WIDTH))" \
-        "$(printf '%.0s-' $(seq 1 $ADDR_WIDTH))"
+split_addr() {
+    local addr="$1"
+    local maxlen=$WIDTH_ADDR
+    local parts=()
+    while [ ${#addr} -gt $maxlen ]; do
+        parts+=("${addr:0:maxlen}")
+        addr="${addr:maxlen}"
+    done
+    parts+=("$addr")
+    echo "${parts[@]}"
 }
 
-# Header
-printf "${BLUE}Welcome to %s (${OS_NAME})${RESET}\n" "$HOSTNAME"
-printf "Kernel: %s | Uptime: %s\n\n" "$KERNEL" "$UPTIME"
+print_header
 
-table_line
-printf "| %-20s | %-10s | %-41s |\n" "Interface" "State" "Addresses"
-table_line
+while IFS= read -r line; do
+    iface=$(awk '{print $1}' <<<"$line")
+    state=$(awk '{print $2}' <<<"$line")
+    addrs=$(awk '{for (i=3; i<=NF; i++) if ($i ~ /^[0-9a-fA-F:.]+\/[0-9]+$/) print $i}' <<<"$line")
 
-# Loop interfaces
-ip -brief addr show | while read iface state addrs; do
-    if [[ "$iface" == "$PRIMARY_IFACE" ]]; then
-        iface_display="${MAGENTA}${iface}*${RESET}"
+    if [[ "$state" == "UP" ]]; then
+        color="$BOLD_GREEN"
+    elif [[ "$state" == "DOWN" ]]; then
+        color="$MAGENTA"
     else
-        iface_display="$iface"
+        color="$CYAN"
     fi
 
-    IFS=' ' read -r -a addr_array <<< "$addrs"
-    first_line=true
+    if [ -z "$addrs" ]; then
+        print_row "$iface" "$state" "-" "$color"
+        echo "$SEP"
+        continue
+    fi
 
-    for addr in "${addr_array[@]}"; do
-        # Determine color
-        if [ $NO_COLOR -eq 1 ]; then
-            addr_color=""
-        elif [[ "$addr" == "$PUBLIC_IP4"* ]]; then
-            addr_color=$BOLD_GREEN
-        elif [[ "$addr" == "$PUBLIC_IP6"* ]]; then
-            addr_color=$BOLD_CYAN
-        elif [[ $addr == *:* ]]; then
-            addr_color=$CYAN
-        else
-            addr_color=$GREEN
-        fi
-
-        # Print address on its own row if too long
-        if [ ${#addr} -ge $MAX_ADDR_WIDTH ]; then
-            if [ "$first_line" = true ]; then
-                print_row "$iface_display" "$state" "$addr" "$addr_color"
-                first_line=false
+    first=1
+    while IFS= read -r addr; do
+        for chunk in $(split_addr "$addr"); do
+            if [ $first -eq 1 ]; then
+                print_row "$iface" "$state" "$chunk" "$color"
+                first=0
             else
-                print_row "" "" "$addr" "$addr_color"
+                print_row "" "" "$chunk" "$color"
             fi
-            continue
-        fi
+        done
+    done <<<"$addrs"
+    echo "$SEP"
+done < <(ip -brief addr show | column -t)
 
-        # Wrap multiple addresses
-        if [ "$first_line" = true ]; then
-            print_row "$iface_display" "$state" "$addr" "$addr_color"
-            first_line=false
-        else
-            print_row "" "" "$addr" "$addr_color"
-        fi
-    done
+# Compact network info table
+PUB4=$(curl -s --max-time 2 -4 https://ifconfig.me || true)
+PUB6=$(curl -s --max-time 2 -6 https://ifconfig.me || true)
+GW=$(ip route show default 2>/dev/null | awk '/default/ {print $3; exit}')
 
-    # Horizontal line after each interface
-    table_line
-done
-
-# Footer
-TOTAL_MEM=$(free -h | awk '/^Mem:/ {print $2}')
-USED_MEM=$(free -h | awk '/^Mem:/ {print $3}')
-DISK=$(df -h / | awk 'NR==2 {print $2 " total, " $3 " used"}')
-printf "\nMemory: %s used / %s total | Disk: %s\n" "$USED_MEM" "$TOTAL_MEM" "$DISK"
+if [ -n "$GW" ] || [ -n "$PUB4" ] || [ -n "$PUB6" ]; then
+    SEP2="+----------------+----------------+----------------+"
+    echo "$SEP2"
+    printf "| %-14s | %-14s | %-14s |\n" "Default GW" "Public IPv4" "Public IPv6"
+    echo "$SEP2"
+    printf "| %-14s | %-14s | %-14s |\n" \
+        "${GW:--}" "${PUB4:--}" "${PUB6:--}"
+    echo "$SEP2"
+fi
