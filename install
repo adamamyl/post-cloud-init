@@ -1,47 +1,46 @@
 #!/bin/bash
-# Installer for cloud-init style MOTD + /etc/issue + systemd service
-# Must be run as root
-# Installs files only if the repo version is newer than the installed version
+# Robust installer for MOTD + /etc/issue updater
+set -euo pipefail
 
-set -e
-
-# --- Check for root ---
 if [ "$(id -u)" -ne 0 ]; then
-    echo "This installer must be run as root. Use sudo ./install.sh"
+    echo "Run as root (sudo ./install.sh)"
     exit 1
 fi
 
-echo "Installing cloud-init style MOTD and /etc/issue updater..."
-
-# Helper: install if source is newer than target
 install_if_newer() {
-    local src="$1"
-    local dst="$2"
-    local mode="$3"
-
+    local src="$1" dst="$2" mode="$3"
     if [ ! -e "$dst" ] || [ "$src" -nt "$dst" ]; then
-        echo "Installing/updating $dst"
         install -o root -g root -m "$mode" "$src" "$dst"
+        echo "Updated: $dst"
     else
-        echo "Skipping $dst (up-to-date)"
+        echo "Up-to-date: $dst"
     fi
 }
 
-# 1️⃣ MOTD script
+echo "Installing MOTD and /etc/issue updater..."
 install_if_newer update-motd.d/99-cloudinit-net /etc/update-motd.d/99-cloudinit-net 755
-
-# 2️⃣ /usr/local/sbin/update-issue.sh
 install_if_newer bin/update-issue.sh /usr/local/sbin/update-issue.sh 755
-
-# 3️⃣ systemd service
 install_if_newer systemd/update-issue.service /etc/systemd/system/update-issue.service 644
 
-# Reload systemd and enable service (always run to be safe)
-echo "Reloading systemd and enabling service..."
-systemctl daemon-reload
-systemctl enable update-issue.service
-systemctl start update-issue.service
+echo "Reloading systemd daemon..."
+systemctl daemon-reload || { echo "Failed to reload systemd daemon"; exit 1; }
 
-echo "Installation complete!"
-echo "MOTD will update dynamically on login."
-echo "/etc/issue updated at boot by systemd service."
+echo "Enabling update-issue.service..."
+systemctl enable update-issue.service || { echo "Failed to enable update-issue.service"; exit 1; }
+systemctl restart update-issue.service || { echo "Failed to start update-issue.service"; exit 1; }
+
+# Enable appropriate network-wait service
+if systemctl list-unit-files | grep -q '^systemd-networkd-wait-online.service'; then
+    echo "Enabling systemd-networkd-wait-online.service..."
+    systemctl enable systemd-networkd-wait-online.service || { echo "Failed to enable networkd-wait-online"; exit 1; }
+elif systemctl list-unit-files | grep -q '^NetworkManager-wait-online.service'; then
+    echo "Enabling NetworkManager-wait-online.service..."
+    systemctl enable NetworkManager-wait-online.service || { echo "Failed to enable NetworkManager-wait-online"; exit 1; }
+fi
+
+# --- Post-install validation: ensure /etc/issue has at least one non-loopback IP ---
+if ! awk '/^\|/ && $2 != "lo" {for (i=4;i<=NF;i++) if ($i ~ /([0-9]{1,3}\.){3}[0-9]{1,3}\/[0-9]+|[0-9a-fA-F:]+\/[0-9]+/) found=1} END{exit !found}' /etc/issue; then
+    echo "Warning: /etc/issue contains no non-loopback IPs. Check DHCP/static network."
+else
+    echo "✅ Installation complete and /etc/issue verified"
+fi
